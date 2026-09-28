@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#1d2330">
+<title>GPX Flickzeug – GPS-Tracks reparieren</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩹</text></svg>">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fbfbf8;--fg:#1d2330;--muted:#5d6574;--line:#d9dbe0;--chip:#eef0f3;--track:#e6007e;--sel:#0a6cff;--danger:#c62828;
+ box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1f27;--fg:#eef0f4;--muted:#a3aab8;--line:#343a46;--chip:#2a303b}}
+:root[data-theme="dark"]{--bg:#1b1f27;--fg:#eef0f4;--muted:#a3aab8;--line:#343a46;--chip:#2a303b}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+button,label.btn{font:inherit;cursor:pointer}
+button:focus-visible,label.btn:focus-within,select:focus-visible{outline:3px solid var(--sel);outline-offset:2px}
+button:disabled{opacity:.4;cursor:default}
+[hidden]{display:none!important}
+
+/* Start */
+#start{height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
+#start .inner{max-width:30rem;width:100%}
+#start svg{width:100%;height:auto;display:block;margin-bottom:18px}
+#start h1{font-size:2.4rem;line-height:1.1;margin:0 0 .4em;letter-spacing:-.01em}
+#start p{color:var(--muted);font-size:1.05rem;line-height:1.5;margin:0 0 1.4em}
+.big{display:block;width:100%;text-align:center;background:var(--track);color:#fff;border:0;border-radius:14px;padding:16px;font-size:1.15rem;font-weight:700}
+#drop{margin-top:10px;font-size:.9rem;color:var(--muted);text-align:center}
+@media (pointer:coarse){#drop{display:none}}
+#start.drag .big{outline:3px dashed var(--sel);outline-offset:4px}
+#resume{margin-top:12px;width:100%;background:transparent;border:1px solid var(--line);color:var(--fg);border-radius:14px;padding:13px;font-size:1rem}
+#ver{margin-top:22px;font-size:.8rem;color:var(--muted);text-align:center}
+
+/* Editor */
+#editor{height:100%;display:flex;flex-direction:column}
+#map{flex:1;min-height:0}
+#top{position:absolute;z-index:1000;top:calc(env(safe-area-inset-top,0px) + 10px);left:10px;right:10px;display:flex;gap:8px;align-items:flex-start;pointer-events:none}
+#stats{pointer-events:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:7px 12px;font-size:14px;line-height:1.35;box-shadow:0 2px 10px rgba(0,0,0,.18);max-width:60%}
+#stats b{font-size:21px}
+#stats small{color:var(--muted);display:block}
+#layerBtns{pointer-events:auto;margin-left:auto;display:flex;flex-direction:column;gap:6px}
+.pill{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+.pill[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+#bar{background:var(--bg);border-top:1px solid var(--line);padding:8px 10px}
+#hint{font-size:14px;color:var(--muted);min-height:2.6em;margin:0 2px 8px;line-height:1.3}
+#modes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
+#modes button{font-size:14px;padding:10px 4px;border-radius:10px;border:1px solid var(--line);background:var(--chip);color:var(--fg)}
+#modes button[aria-pressed="true"]{background:var(--track);border-color:var(--track);color:#fff;font-weight:700}
+#actions{display:flex;gap:6px}
+#actions button{flex:1;font-size:14px;padding:10px 4px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--fg)}
+#actions .primary{background:var(--fg);color:var(--bg);font-weight:700;border-color:var(--fg)}
+@media (min-width:760px){#bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap}#hint{flex-basis:100%}#modes{flex:1;margin:0}#actions{flex:1}}
+.pt{width:30px;height:30px;display:flex;align-items:center;justify-content:center}
+.pt i{width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid var(--track);display:block}
+.pt.ins i{border-color:var(--sel)}
+.pt.del i{border-color:var(--danger)}
+.pt.sel i{border-color:var(--sel);background:var(--sel);width:16px;height:16px}
+
+/* Sheets */
+.scrim{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--bg);color:var(--fg);width:100%;max-width:32rem;border-radius:18px 18px 0 0;padding:20px 18px calc(18px + env(safe-area-inset-bottom,0px));max-height:88%;overflow:auto}
+@media (min-width:760px){.scrim{align-items:center}.sheet{border-radius:18px}}
+.sheet h2{margin:0 0 .3em;font-size:1.35rem}
+.sheet p{color:var(--muted);line-height:1.45;margin:.2em 0 1em}
+.sheet h3{font-size:1rem;margin:1.1em 0 .5em}
+.chips{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.chips button{padding:11px 4px;border-radius:10px;border:1px solid var(--line);background:var(--chip);color:var(--fg);font-size:14px}
+.chips button[aria-pressed="true"]{background:var(--fg);color:var(--bg);font-weight:700}
+.choice{display:block;width:100%;text-align:left;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:12px;padding:12px 14px;margin-top:8px}
+.choice b{display:block;font-size:1.02rem}
+.choice span{color:var(--muted);font-size:.9rem;line-height:1.35}
+.choice.rec{border-color:var(--track);border-width:2px}
+.close{margin-top:14px;width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--fg)}
+.help dl{margin:0}.help dt{font-weight:700;margin-top:.8em}.help dd{margin:.2em 0 0;color:var(--muted);line-height:1.4}
+#busy{position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.1rem}
+#toast{position:fixed;z-index:3100;left:50%;transform:translateX(-50%);bottom:calc(170px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:9px 15px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90%;text-align:center}
+#toast.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+
+<section id="start">
+ <div class="inner">
+  <svg viewBox="0 0 320 90" aria-hidden="true">
+   <path d="M10 60 C50 20 80 75 120 45" fill="none" stroke="#e6007e" stroke-width="6" stroke-linecap="round"/>
+   <path d="M120 45 L150 12 L162 70 L178 25 L200 48" fill="none" stroke="#9aa0ab" stroke-width="3" stroke-dasharray="5 6" stroke-linecap="round"/>
+   <path d="M120 45 C150 38 170 60 200 48" fill="none" stroke="#0a6cff" stroke-width="6" stroke-linecap="round"/>
+   <circle cx="148" cy="45" r="6" fill="#fff" stroke="#0a6cff" stroke-width="3"/><circle cx="176" cy="54" r="6" fill="#fff" stroke="#0a6cff" stroke-width="3"/>
+   <path d="M200 48 C240 20 270 70 310 35" fill="none" stroke="#e6007e" stroke-width="6" stroke-linecap="round"/>
+  </svg>
+  <h1>GPX Flickzeug</h1>
+  <p>Dein GPS hat Mist aufgezeichnet? Öffne die GPX-Datei, lass Sprünge automatisch glätten und zieh die Route dort hin, wo du wirklich unterwegs warst. Alles bleibt auf deinem Gerät.</p>
+  <label class="btn big">GPX-Datei öffnen<input type="file" id="fIn" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label>
+  <div id="drop">oder Datei hier hineinziehen</div>
+  <button id="resume" hidden>Letzte Bearbeitung fortsetzen</button>
+  <div id="ver">Version 1.0.2 · Karte © OpenStreetMap-Mitwirkende · Luftbild © Esri</div>
+ </div>
+</section>
+
+<section id="editor" hidden>
+ <div id="top">
+  <div id="stats"><b id="km">–</b> km<small id="info">–</small><small id="info2"></small></div>
+  <div id="layerBtns">
+   <button class="pill" id="bSat" aria-pressed="false">Luftbild</button>
+   <button class="pill" id="bRaw" aria-pressed="true">Original</button>
+   <button class="pill" id="bHelp">Hilfe</button>
+  </div>
+ </div>
+ <div id="map"></div>
+ <div id="bar">
+  <p id="hint"></p>
+  <div id="modes">
+   <button data-m="move" aria-pressed="true">Verschieben</button>
+   <button data-m="add" aria-pressed="false">Einfügen</button>
+   <button data-m="del" aria-pressed="false">Löschen</button>
+   <button data-m="cut" aria-pressed="false">Abschnitt weg</button>
+  </div>
+  <div id="actions">
+   <button id="bUndo" disabled>Rückgängig</button>
+   <button id="bMore">Mehr</button>
+   <button id="bExp" class="primary">GPX speichern</button>
+  </div>
+ </div>
+</section>
+
+<div class="scrim" id="importSheet" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="impT">
+ <h2 id="impT">Track geladen</h2>
+ <p id="impInfo"></p>
+ <h3>Was für eine Aktivität?</h3>
+ <div class="chips" id="actChips">
+  <button data-a="walk" aria-pressed="false">Gehen</button>
+  <button data-a="run" aria-pressed="true">Laufen</button>
+  <button data-a="skate" aria-pressed="false">Skaten</button>
+  <button data-a="bike" aria-pressed="false">Rad</button>
+ </div>
+ <h3>Wie soll's losgehen?</h3>
+ <button class="choice rec" id="cClean"><b>Automatisch bereinigen</b><span>Entfernt Sprünge und hängengebliebene Punkte und glättet das Zittern. Danach feilst du von Hand nach.</span></button>
+ <button class="choice" id="cRaw"><b>So übernehmen</b><span>Nur leicht ausgedünnt, sonst unverändert – wenn der Track fast stimmt.</span></button>
+ <button class="close" id="cCancel">Abbrechen</button>
+</div></div>
+
+<div class="scrim" id="moreSheet" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="moreT">
+ <h2 id="moreT">Mehr</h2>
+ <button class="choice" id="mNew"><b>Andere GPX-Datei öffnen</b><span>Die aktuelle Bearbeitung wird dabei ersetzt – vorher speichern, falls du sie noch brauchst.</span></button>
+ <button class="choice" id="mReset"><b>Alle Änderungen verwerfen</b><span>Zurück zum Stand direkt nach dem Öffnen. „Rückgängig“ holt es wieder zurück.</span></button>
+ <button class="choice" id="mTheme"><b>Hell / Dunkel umschalten</b><span>Nur für diese Oberfläche, die Karte bleibt gleich.</span></button>
+ <button class="close" data-close>Schließen</button>
+</div></div>
+
+<div class="scrim help" id="helpSheet" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpT">
+ <h2 id="helpT">So flickst du deinen Track</h2>
+ <p>Die pinke Linie ist deine bearbeitete Route, grau gestrichelt das Original zum Vergleich.</p>
+ <dl>
+  <dt>Verschieben</dt><dd>Reinzoomen, bis Punkte erscheinen, dann einen Punkt antippen und ziehen.</dd>
+  <dt>Einfügen</dt><dd>Tipp auf die Karte, wo du wirklich langgekommen bist. Der Punkt wird in den nächstgelegenen Abschnitt gesetzt – bei Funklöchern einfach der Reihe nach den echten Weg entlangtippen.</dd>
+  <dt>Löschen</dt><dd>Einen Punkt antippen, weg ist er.</dd>
+  <dt>Abschnitt weg</dt><dd>Zwei Punkte antippen, alles dazwischen verschwindet. Danach mit „Einfügen“ neu setzen.</dd>
+  <dt>Zeiten</dt><dd>Neue Punkte (blau) bekommen automatisch Zeiten mit gleichmäßigem Tempo zwischen den echten Punkten davor und danach. Start, Ziel und Gesamtzeit bleiben echt.</dd>
+  <dt>Speichern</dt><dd>„GPX speichern“ teilt oder lädt die korrigierte Datei herunter – die kannst du z. B. bei Strava hochladen. Deine Bearbeitung wird außerdem im Browser zwischengespeichert.</dd>
+ </dl>
+ <button class="close" data-close>Verstanden</button>
+</div></div>
+
+<div id="busy" hidden>Track wird bereinigt …</div>
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+// ===== PIPELINE START (reine Funktionen, ohne DOM) =====
+const R_E=6371000;
+function hav(a,b){const r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const h=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R_E*Math.asin(Math.min(1,Math.sqrt(h)))}
+const ACT={
+ walk:{vmax:3.0,q:0.05,move:0.35,label:'Gehen',pace:true},
+ run:{vmax:6.5,q:0.15,move:0.8,label:'Laufen',pace:true},
+ skate:{vmax:12,q:0.5,move:1.2,label:'Skaten',pace:false},
+ bike:{vmax:20,q:1.0,move:1.2,label:'Rad',pace:false}};
+function median(a){const s=a.slice().sort((x,y)=>x-y),n=s.length;return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2}
+// pts: [lat,lon,ele|null,t|null]
+function cleanTrack(pts,act){
+ const A=ACT[act],n=pts.length,hasT=pts.every(p=>p[3]!=null);
+ const la0=pts.reduce((s,p)=>s+p[0],0)/n,lo0=pts.reduce((s,p)=>s+p[1],0)/n,c=Math.cos(la0*Math.PI/180);
+ const X=pts.map(p=>(p[1]-lo0)*Math.PI/180*R_E*c),Y=pts.map(p=>(p[0]-la0)*Math.PI/180*R_E);
+ const T=pts.map((p,i)=>hasT?p[3]:i);
+ const keep=new Array(n).fill(true);
+ for(let i=1;i<n;i++)if(X[i]===X[i-1]&&Y[i]===Y[i-1])keep[i]=false; // hängengebliebene Punkte
+ const W=hasT?30:15;
+ for(let it=0;it<3;it++){ // Hampel-Filter im Zeitfenster
+  const idx=[];for(let i=0;i<n;i++)if(keep[i])idx.push(i);
+  let lo=0,hi=0;const bad=[];
+  for(let k=0;k<idx.length;k++){const t=T[idx[k]];
+   while(T[idx[lo]]<t-W)lo++;while(hi<idx.length&&T[idx[hi]]<=t+W)hi++;
+   if(hi-lo<3)continue;const xs=[],ys=[];for(let j=lo;j<hi;j++){xs.push(X[idx[j]]);ys.push(Y[idx[j]])}
+   const mx=median(xs),my=median(ys);const dd=xs.map((x,j)=>Math.hypot(x-mx,ys[j]-my));const mad=median(dd);
+   if(Math.hypot(X[idx[k]]-mx,Y[idx[k]]-my)>Math.max(25,3.5*mad))bad.push(idx[k])}
+  bad.forEach(i=>keep[i]=false);if(!bad.length)break}
+ let acc=[];for(let i=0;i<n;i++)if(keep[i])acc.push(i);
+ if(hasT){const g=[acc[0]];for(const i of acc.slice(1)){const j=g[g.length-1],dt=T[i]-T[j];
+   if(Math.hypot(X[i]-X[j],Y[i]-Y[j])/Math.max(dt,1)<=A.vmax||dt>60)g.push(i)}acc=g}
+ if(acc.length<2)return pts.map(p=>p.slice());
+ const tt=acc.map(i=>T[i]);
+ const sx=rts(tt,acc.map(i=>X[i]),A.q,225),sy=rts(tt,acc.map(i=>Y[i]),A.q,225);
+ const ev=acc.map(i=>pts[i][2]);
+ return acc.map((i,k)=>{let e=null;if(ev[k]!=null){const w=[];for(let j=Math.max(0,k-15);j<=Math.min(acc.length-1,k+15);j++)if(ev[j]!=null)w.push(ev[j]);e=+median(w).toFixed(1)}
+  return[+(la0+sy[k]/R_E*180/Math.PI).toFixed(6),+(lo0+sx[k]/(R_E*c)*180/Math.PI).toFixed(6),e,hasT?T[i]:null]})}
+// Kalman-Filter + RTS-Glätter, konstante Geschwindigkeit, je Achse
+function rts(t,z,q,r){const m=z.length,xf=[],Pf=[],xp=[],Pp=[],dts=[];let x=[z[0],0],P=[r,0,0,10];
+ for(let k=0;k<m;k++){const dt=k?Math.max(t[k]-t[k-1],0.001):1;dts[k]=dt;
+  if(k){x=[x[0]+dt*x[1],x[1]];const a=P[0]+dt*(P[1]+P[2])+dt*dt*P[3],b=P[1]+dt*P[3],cc=P[2]+dt*P[3],d=P[3];
+   P=[a+q*dt**4/4,b+q*dt**3/2,cc+q*dt**3/2,d+q*dt*dt]}
+  xp[k]=x.slice();Pp[k]=P.slice();
+  const S=P[0]+r,K0=P[0]/S,K1=P[2]/S,y=z[k]-x[0];x=[x[0]+K0*y,x[1]+K1*y];
+  P=[(1-K0)*P[0],(1-K0)*P[1],P[2]-K1*P[0],P[3]-K1*P[1]];xf[k]=x.slice();Pf[k]=P.slice()}
+ const xs=xf.map(v=>v.slice()),Ps=Pf.map(v=>v.slice());
+ for(let k=m-2;k>=0;k--){const dt=dts[k+1],Pk=Pf[k],Pn=Pp[k+1];
+  const PF=[Pk[0]+dt*Pk[1],Pk[1],Pk[2]+dt*Pk[3],Pk[3]]; // Pk*F'
+  const det=Pn[0]*Pn[3]-Pn[1]*Pn[2]||1e-9,inv=[Pn[3]/det,-Pn[1]/det,-Pn[2]/det,Pn[0]/det];
+  const C=[PF[0]*inv[0]+PF[1]*inv[2],PF[0]*inv[1]+PF[1]*inv[3],PF[2]*inv[0]+PF[3]*inv[2],PF[2]*inv[1]+PF[3]*inv[3]];
+  const d0=xs[k+1][0]-xp[k+1][0],d1=xs[k+1][1]-xp[k+1][1];
+  xs[k]=[xf[k][0]+C[0]*d0+C[1]*d1,xf[k][1]+C[2]*d0+C[3]*d1]}
+ return xs.map(v=>v[0])}
+// Douglas-Peucker in Metern
+function simplify(pts,eps){const n=pts.length;if(n<3)return pts.slice();
+ const la0=pts[0][0],c=Math.cos(la0*Math.PI/180),k=Math.PI/180*R_E;
+ const X=pts.map(p=>p[1]*k*c),Y=pts.map(p=>p[0]*k);const keep=new Uint8Array(n);keep[0]=keep[n-1]=1;const st=[[0,n-1]];
+ while(st.length){const[a,b]=st.pop();if(b<=a+1)continue;const dx=X[b]-X[a],dy=Y[b]-Y[a],L=Math.hypot(dx,dy);let best=-1,bi=-1;
+  for(let i=a+1;i<b;i++){const d=L?Math.abs(dx*(Y[i]-Y[a])-dy*(X[i]-X[a]))/L:Math.hypot(X[i]-X[a],Y[i]-Y[a]);if(d>best){best=d;bi=i}}
+  if(best>eps){keep[bi]=1;st.push([a,bi],[bi,b])}}
+ return pts.filter((_,i)=>keep[i])}
+// Eingefügte Punkte (Flag 0) bekommen Zeiten mit gleichmäßigem Tempo zwischen den echten Punkten
+function retime(pts){let a=-1;
+ for(let i=0;i<pts.length;i++){if(!pts[i][4]||pts[i][3]==null)continue;
+  if(a>=0&&i-a>1){const T0=pts[a][3],T1=pts[i][3],cum=[0];
+   for(let k=a+1;k<=i;k++)cum.push(cum[cum.length-1]+hav(pts[k-1],pts[k]));const tot=cum[cum.length-1]||1;
+   for(let k=a+1;k<i;k++)pts[k][3]=Math.round(T0+(T1-T0)*cum[k-a]/tot)}
+  a=i}}
+function trackStats(pts,act){let d=0,mv=0;const th=ACT[act].move;
+ for(let i=1;i<pts.length;i++){const s=hav(pts[i-1],pts[i]);d+=s;const dt=(pts[i][3]!=null&&pts[i-1][3]!=null)?pts[i][3]-pts[i-1][3]:0;
+  if(dt>0&&s/dt>=th)mv+=dt}
+ const T=(pts[0][3]!=null&&pts[pts.length-1][3]!=null)?pts[pts.length-1][3]-pts[0][3]:null;return{d,T,mv}}
+// ===== PIPELINE END =====
+
+const KEY='gpx-flickzeug-v1';
+const $=id=>document.getElementById(id);
+let S=null,pts=[],undo=[],mode='move',cutA=null,map,line,rawLine,mk,osm,sat,pending=null;
+
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>e.classList.remove('on'),2200)}
+function fmtT(s){s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0')}
+function fmtKm(m){return(m/1000).toFixed(2).replace('.',',')}
+function fmtRate(d,t,act){if(!t||!d)return'';if(ACT[act].pace){const p=t/(d/1000);return Math.floor(p/60)+':'+String(Math.round(p%60)).padStart(2,'0').replace('60','59')+' min/km'}return(d/t*3.6).toFixed(1).replace('.',',')+' km/h'}
+const show=id=>{$(id).hidden=false};const hide=id=>{$(id).hidden=true};
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.scrim').hidden=true);
+document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s&&s.id!=='importSheet')s.hidden=true}));
+
+// ---- GPX lesen ----
+function parseGpx(text){const x=new DOMParser().parseFromString(text,'application/xml');
+ if(x.getElementsByTagName('parsererror').length)throw new Error('Die Datei ist kein gültiges GPX (XML-Fehler).');
+ let nodes=[...x.getElementsByTagName('trkpt')];if(nodes.length<2)nodes=[...x.getElementsByTagName('rtept')];
+ if(nodes.length<2)nodes=[...x.getElementsByTagName('wpt')];
+ if(nodes.length<2)throw new Error('In der Datei steckt kein Track mit mindestens zwei Punkten.');
+ const ch=(n,t)=>{const e=n.getElementsByTagName(t)[0];return e?e.textContent.trim():null};
+ let p=nodes.map(n=>{const tm=ch(n,'time'),el=ch(n,'ele');const t=tm?Date.parse(tm)/1000:NaN;
+  return[+n.getAttribute('lat'),+n.getAttribute('lon'),el!=null&&el!==''&&isFinite(+el)?+el:null,isFinite(t)?Math.round(t):null]}).filter(q=>isFinite(q[0])&&isFinite(q[1]));
+ if(p.some(q=>q[3]==null))p.forEach(q=>q[3]=null);else p.sort((a,b)=>a[3]-b[3]);
+ const trk=x.getElementsByTagName('trk')[0];
+ return{pts:p,name:(trk&&ch(trk,'name'))||ch(x.documentElement,'name')||'',type:(trk&&ch(trk,'type'))||''}}
+function guessAct(type,p){type=(type||'').toLowerCase();
+ if(/run|lauf|jog/.test(type))return'run';if(/ride|cycl|bike|rad/.test(type))return'bike';if(/skat|inline/.test(type))return'skate';if(/walk|hik|geh|wander/.test(type))return'walk';
+ const st=trackStats(p.map(q=>q.concat(1)),'run');if(st.T){const v=st.d/st.T;if(v<1.6)return'walk';if(v<3.6)return'run';return'bike'}return'run'}
+async function openFile(f){if(!f)return;try{const r=parseGpx(await f.text());const base=f.name.replace(/\.[^.]+$/,'');
+ pending={...r,file:base,act:guessAct(r.type,r.pts)};
+ const st=trackStats(r.pts.map(q=>q.concat(1)),pending.act);
+ $('impInfo').textContent=`${r.name||base}: ${r.pts.length.toLocaleString('de-DE')} Punkte, ${fmtKm(st.d)} km roh`+(st.T?`, ${fmtT(st.T)} h`:', ohne Zeitstempel')+'.';
+ document.querySelectorAll('#actChips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.a===pending.act));show('importSheet')}
+ catch(e){toast(e.message||'Die Datei konnte nicht gelesen werden.')}}
+$('fIn').onchange=e=>{openFile(e.target.files[0]);e.target.value=''};
+const st0=$('start');
+['dragenter','dragover'].forEach(t=>st0.addEventListener(t,e=>{e.preventDefault();st0.classList.add('drag')}));
+['dragleave','drop'].forEach(t=>st0.addEventListener(t,e=>{e.preventDefault();st0.classList.remove('drag')}));
+st0.addEventListener('drop',e=>openFile(e.dataTransfer.files[0]));
+document.querySelectorAll('#actChips button').forEach(b=>b.onclick=()=>{pending.act=b.dataset.a;document.querySelectorAll('#actChips button').forEach(x=>x.setAttribute('aria-pressed',x===b))});
+$('cCancel').onclick=()=>{pending=null;hide('importSheet')};
+function begin(clean){const p=pending;hide('importSheet');show('busy');
+ setTimeout(()=>{try{let e=clean?cleanTrack(p.pts,p.act):p.pts.map(q=>q.slice());e=simplify(e,clean?3:1.5).map(q=>[q[0],q[1],q[2],q[3],1]);
+  const step=Math.max(1,Math.ceil(p.pts.length/8000));const raw=p.pts.filter((_,i)=>i%step===0).map(q=>[q[0],q[1]]);
+  S={v:1,file:p.file,name:p.name,type:p.type,act:p.act,raw,orig:e.map(q=>q.slice()),pts:e};undo=[];pending=null;openEditor(true);
+  const a=trackStats(p.pts.map(q=>q.concat(1)),p.act),b=trackStats(e,p.act);
+  toast(clean?`Bereinigt: ${fmtKm(a.d)} → ${fmtKm(b.d)} km`:`${e.length} Punkte übernommen`)}
+ catch(err){toast('Beim Bereinigen ist etwas schiefgelaufen. Probier „So übernehmen“.');console.error(err)}finally{hide('busy')}},30)}
+$('cClean').onclick=()=>begin(true);$('cRaw').onclick=()=>begin(false);
+
+// ---- Speicher ----
+function save(){try{S.pts=pts;localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function loadSaved(){try{const s=JSON.parse(localStorage.getItem(KEY)||'null');if(s&&s.v===1&&Array.isArray(s.pts)&&s.pts.length>1)return s}catch(e){}return null}
+if(loadSaved())show('resume');
+$('resume').onclick=()=>{S=loadSaved();if(S){undo=[];openEditor(true)}};
+
+// ---- Editor ----
+const HINTS={
+ move:'Punkt antippen und ziehen. Punkte erscheinen erst, wenn du nah genug reingezoomt hast.',
+ add:'Tipp dorthin, wo du wirklich warst. Der Punkt landet im nächstgelegenen Abschnitt – der Reihe nach den echten Weg entlangtippen.',
+ del:'Punkt antippen, um ihn zu entfernen.',
+ cut:'Ersten Punkt antippen, dann den zweiten. Alles dazwischen wird entfernt.'};
+function initMap(){map=L.map('map',{zoomControl:false});
+ osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende'}).addTo(map);
+ if(location.protocol==='file:')toast('Lokal geöffnet: OpenStreetMap liefert hier keine Karte. Über den Link (z. B. GitHub Pages) öffnen oder „Luftbild“ nutzen.');
+ sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Luftbild © Esri'});
+ rawLine=L.polyline([],{color:'#6b6f7a',weight:2,opacity:.6,dashArray:'4 5',interactive:false}).addTo(map);
+ line=L.polyline([],{color:'#e6007e',weight:4,opacity:.9,interactive:false}).addTo(map);
+ mk=L.layerGroup().addTo(map);
+ map.on('moveend zoomend',drawMarkers);map.on('click',onMapClick)}
+function openEditor(fit){hide('start');show('editor');if(!map)initMap();map.invalidateSize();
+ pts=S.pts;rawLine.setLatLngs(S.raw);$('bUndo').disabled=true;
+ if(fit||!map._loaded)map.fitBounds(L.latLngBounds(pts.map(p=>[p[0],p[1]])),{padding:[30,30]});
+ setMode('move');redraw();
+ try{if(!localStorage.getItem(KEY+'-help')){show('helpSheet');localStorage.setItem(KEY+'-help','1')}}catch(e){}}
+function stats(){const s=trackStats(pts,S.act);$('km').textContent=fmtKm(s.d);
+ if(s.T){$('info').textContent='Gesamt '+fmtT(s.T)+' · '+fmtRate(s.d,s.T,S.act);$('info2').textContent=s.mv?'In Bewegung '+fmtT(s.mv)+' · '+fmtRate(s.d,s.mv,S.act):''}
+ else{$('info').textContent=pts.length+' Punkte · ohne Zeitstempel';$('info2').textContent=''}}
+function redraw(){retime(pts);line.setLatLngs(pts.map(p=>[p[0],p[1]]));stats();drawMarkers();save()}
+function push(){undo.push(JSON.stringify(pts));if(undo.length>80)undo.shift();$('bUndo').disabled=false}
+const icon=c=>L.divIcon({className:'',html:'<div class="pt '+c+'"><i></i></div>',iconSize:[30,30],iconAnchor:[15,15]});
+function drawMarkers(){if(!map||!map._loaded)return;mk.clearLayers();if(mode==='add')return;
+ const b=map.getBounds().pad(.1),vis=[];pts.forEach((p,i)=>{if(b.contains([p[0],p[1]]))vis.push(i)});
+ if(vis.length>350){if(mode!=='move'||map.getZoom()>=14)$('hint').textContent='Zu viele Punkte im Bild – weiter reinzoomen, dann erscheinen sie.';return}
+ $('hint').textContent=cutA!==null?'Jetzt den zweiten Punkt antippen.':HINTS[mode];
+ vis.forEach(i=>{const p=pts[i];
+  const m=L.marker([p[0],p[1]],{icon:icon(i===cutA?'sel':(mode==='del'||mode==='cut')?'del':(p[4]?'':'ins')),draggable:mode==='move',keyboard:false,autoPan:true});
+  if(mode==='move'){m.on('dragstart',push);m.on('drag',e=>{const l=e.target.getLatLng();pts[i][0]=+l.lat.toFixed(6);pts[i][1]=+l.lng.toFixed(6);line.setLatLngs(pts.map(p=>[p[0],p[1]]))});m.on('dragend',()=>{retime(pts);stats();save()})}
+  else m.on('click',()=>tapPoint(i));m.addTo(mk)})}
+function tapPoint(i){
+ if(mode==='del'){if(pts.length<3)return toast('Ein Track braucht mindestens zwei Punkte');
+  push();pts.splice(i,1);redraw();toast('Punkt gelöscht')}
+ else if(mode==='cut'){if(cutA===null){cutA=i;drawMarkers();return}
+  const a=Math.min(cutA,i),b=Math.max(cutA,i);cutA=null;
+  if(b-a<2){drawMarkers();return toast('Dazwischen liegt kein Punkt')}
+  push();pts.splice(a+1,b-a-1);redraw();toast((b-a-1)+' Punkte entfernt')}}
+function onMapClick(e){if(mode!=='add')return;const P=map.latLngToLayerPoint(e.latlng);let best=Infinity,bi=0,bt=0;
+ for(let i=0;i<pts.length-1;i++){const A=map.latLngToLayerPoint([pts[i][0],pts[i][1]]),B=map.latLngToLayerPoint([pts[i+1][0],pts[i+1][1]]);
+  const dx=B.x-A.x,dy=B.y-A.y,L2=dx*dx+dy*dy;let t=L2?((P.x-A.x)*dx+(P.y-A.y)*dy)/L2:0;t=Math.max(0,Math.min(1,t));
+  const d=(A.x+t*dx-P.x)**2+(A.y+t*dy-P.y)**2;if(d<best){best=d;bi=i;bt=t}}
+ const a=pts[bi],b=pts[bi+1];push();
+ const ele=(a[2]!=null&&b[2]!=null)?+(a[2]+(b[2]-a[2])*bt).toFixed(1):(a[2]??b[2]);
+ const t=(a[3]!=null&&b[3]!=null)?Math.round(a[3]+(b[3]-a[3])*bt):null;
+ pts.splice(bi+1,0,[+e.latlng.lat.toFixed(6),+e.latlng.lng.toFixed(6),ele,t,0]);redraw();
+ L.circleMarker(e.latlng,{radius:7,color:'#0a6cff',weight:3,fillOpacity:.6,interactive:false}).addTo(mk)}
+function setMode(m){mode=m;cutA=null;document.querySelectorAll('#modes button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.m===m));$('hint').textContent=HINTS[m];drawMarkers()}
+document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+$('bUndo').onclick=()=>{if(!undo.length)return;pts=JSON.parse(undo.pop());cutA=null;$('bUndo').disabled=!undo.length;redraw()};
+$('bSat').onclick=e=>{const on=!map.hasLayer(sat);if(on){map.removeLayer(osm);sat.addTo(map)}else{map.removeLayer(sat);osm.addTo(map)}e.currentTarget.setAttribute('aria-pressed',on)};
+$('bRaw').onclick=e=>{const on=!map.hasLayer(rawLine);on?rawLine.addTo(map):map.removeLayer(rawLine);e.currentTarget.setAttribute('aria-pressed',on)};
+$('bHelp').onclick=()=>show('helpSheet');$('bMore').onclick=()=>show('moreSheet');
+$('mNew').onclick=()=>{hide('moreSheet');$('fIn').click()};
+$('mReset').onclick=()=>{hide('moreSheet');push();pts=S.orig.map(q=>q.slice());redraw();toast('Zurückgesetzt – „Rückgängig“ holt es zurück')};
+$('mTheme').onclick=()=>{const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
+ r.dataset.theme=dark?'light':'dark';try{localStorage.setItem(KEY+'-theme',r.dataset.theme)}catch(e){}hide('moreSheet')};
+try{const th=localStorage.getItem(KEY+'-theme');if(th)document.documentElement.dataset.theme=th}catch(e){}
+
+// ---- Export ----
+const esc=s=>String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+$('bExp').onclick=()=>{let last=-Infinity;const hasT=pts.every(p=>p[3]!=null);
+ const rows=pts.map(p=>{let s='   <trkpt lat="'+p[0].toFixed(7)+'" lon="'+p[1].toFixed(7)+'">';if(p[2]!=null)s+='<ele>'+(+p[2]).toFixed(1)+'</ele>';
+  if(hasT){const t=Math.max(p[3],last+1);last=t;s+='<time>'+new Date(t*1000).toISOString().replace('.000','')+'</time>'}return s+'</trkpt>'});
+ const gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx creator="GPX Flickzeug 1.0.2" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">\n'+
+  (hasT?' <metadata><time>'+new Date(pts[0][3]*1000).toISOString().replace('.000','')+'</time></metadata>\n':'')+
+  ' <trk>\n  <name>'+esc(S.name||S.file)+'</name>\n'+(S.type?'  <type>'+esc(S.type)+'</type>\n':'')+'  <trkseg>\n'+rows.join('\n')+'\n  </trkseg>\n </trk>\n</gpx>\n';
+ const name=(S.file||'track')+'_korrigiert.gpx',blob=new Blob([gpx],{type:'application/gpx+xml'});
+ const dl=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);toast(name+' gespeichert')};
+ let file=null;try{file=new File([blob],name,{type:'application/gpx+xml'})}catch(e){}
+ if(file&&navigator.canShare&&matchMedia('(pointer:coarse)').matches&&navigator.canShare({files:[file]}))navigator.share({files:[file],title:name}).catch(e=>{if(e&&e.name!=='AbortError')dl()});else dl()};
+</script>
+</body>
+</html>
