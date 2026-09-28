@@ -38,7 +38,8 @@ button:disabled{opacity:.4;cursor:default}
 
 /* Editor */
 #editor{height:100%;display:flex;flex-direction:column}
-#map{flex:1;min-height:0}
+#map{flex:1;min-height:0;position:relative;overflow:hidden}
+#editor{overflow:hidden}
 #top{position:absolute;z-index:1000;top:calc(env(safe-area-inset-top,0px) + 10px);left:10px;right:10px;display:flex;gap:8px;align-items:flex-start;pointer-events:none}
 #stats{pointer-events:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:7px 12px;font-size:14px;line-height:1.35;box-shadow:0 2px 10px rgba(0,0,0,.18);max-width:60%}
 #stats b{font-size:21px}
@@ -99,7 +100,7 @@ button:disabled{opacity:.4;cursor:default}
   <label class="btn big">GPX-Datei öffnen<input type="file" id="fIn" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label>
   <div id="drop">oder Datei hier hineinziehen</div>
   <button id="resume" hidden>Letzte Bearbeitung fortsetzen</button>
-  <div id="ver">Version 1.0.2 · Karte © OpenStreetMap-Mitwirkende · Luftbild © Esri</div>
+  <div id="ver">Version 1.1 · Karte © OpenStreetMap-Mitwirkende · Luftbild © Esri</div>
  </div>
 </section>
 
@@ -161,7 +162,7 @@ button:disabled{opacity:.4;cursor:default}
   <dt>Einfügen</dt><dd>Tipp auf die Karte, wo du wirklich langgekommen bist. Der Punkt wird in den nächstgelegenen Abschnitt gesetzt – bei Funklöchern einfach der Reihe nach den echten Weg entlangtippen.</dd>
   <dt>Löschen</dt><dd>Einen Punkt antippen, weg ist er.</dd>
   <dt>Abschnitt weg</dt><dd>Zwei Punkte antippen, alles dazwischen verschwindet. Danach mit „Einfügen“ neu setzen.</dd>
-  <dt>Zeiten</dt><dd>Neue Punkte (blau) bekommen automatisch Zeiten mit gleichmäßigem Tempo zwischen den echten Punkten davor und danach. Start, Ziel und Gesamtzeit bleiben echt.</dd>
+  <dt>Zeiten</dt><dd>Neue Punkte (blau) bekommen automatisch Zeiten mit gleichmäßigem Tempo zwischen den echten Punkten davor und danach. Start, Ziel und Gesamtzeit bleiben echt. Verschiebst du einen echten Punkt um mehr als 20 m, passt sein alter Zeitstempel nicht mehr – er wird dann ebenfalls blau und neu verteilt. Zusätzlich prüft die App nach jeder Änderung, ob irgendwo ein unmögliches Tempo entsteht, und korrigiert die betroffenen Zeitstempel.</dd>
   <dt>Speichern</dt><dd>„GPX speichern“ teilt oder lädt die korrigierte Datei herunter – die kannst du z. B. bei Strava hochladen. Deine Bearbeitung wird außerdem im Browser zwischengespeichert.</dd>
  </dl>
  <button class="close" data-close>Verstanden</button>
@@ -190,6 +191,13 @@ function cleanTrack(pts,act){
  const T=pts.map((p,i)=>hasT?p[3]:i);
  const keep=new Array(n).fill(true);
  for(let i=1;i<n;i++)if(X[i]===X[i-1]&&Y[i]===Y[i-1])keep[i]=false; // hängengebliebene Punkte
+ if(hasT){ // Spikes entfernen: Punkte, deren Hin- UND Rückweg unmögliches Tempo ergeben – immer den schlimmsten zuerst
+  for(let pass=0;pass<200;pass++){const idx=[];for(let i=0;i<n;i++)if(keep[i])idx.push(i);if(idx.length<3)break;
+   const sc=new Float64Array(idx.length);const v=(i,j)=>Math.hypot(X[j]-X[i],Y[j]-Y[i])/Math.max(T[j]-T[i],1);
+   for(let k=0;k<idx.length;k++){const vi=k?v(idx[k-1],idx[k]):0,vo=k<idx.length-1?v(idx[k],idx[k+1]):0;
+    sc[k]=(k===0)?vo:(k===idx.length-1)?vi:Math.min(vi,vo)}
+   let rm=0;for(let k=0;k<idx.length;k++){if(sc[k]>A.vmax&&(k===0||sc[k]>=sc[k-1])&&(k===idx.length-1||sc[k]>=sc[k+1])){keep[idx[k]]=false;rm++}}
+   if(!rm)break}}
  const W=hasT?30:15;
  for(let it=0;it<3;it++){ // Hampel-Filter im Zeitfenster
   const idx=[];for(let i=0;i<n;i++)if(keep[i])idx.push(i);
@@ -240,6 +248,18 @@ function retime(pts){let a=-1;
    for(let k=a+1;k<=i;k++)cum.push(cum[cum.length-1]+hav(pts[k-1],pts[k]));const tot=cum[cum.length-1]||1;
    for(let k=a+1;k<i;k++)pts[k][3]=Math.round(T0+(T1-T0)*cum[k-a]/tot)}
   a=i}}
+// Tempo-Check: echte Punkte, deren Zeitstempel zu unmöglichem Tempo führen (z. B. weil sie weit verschoben wurden),
+// verlieren ihren festen Zeitstempel und werden wie eingefügte Punkte neu verteilt. Start und Ziel bleiben fest.
+function maxSpeed(p){let m=0,at=-1;for(let i=1;i<p.length;i++){const v=hav(p[i-1],p[i])/Math.max(p[i][3]-p[i-1][3],1);if(v>m){m=v;at=i}}return[m,at]}
+function fixSpeeds(pts,vmax){if(pts.length<3||pts.some(p=>p[3]==null)){retime(pts);return 0}
+ let n=0;retime(pts);
+ for(let guard=0;guard<600;guard++){const[m,w]=maxSpeed(pts);if(m<=vmax)break;
+  let a=w-1;while(a>0&&!pts[a][4])a--;let b=w;while(b<pts.length-1&&!pts[b][4])b++;
+  const cand=[a,b].filter(k=>k>0&&k<pts.length-1&&pts[k][4]);if(!cand.length)break;
+  let best=cand[0],bv=Infinity;
+  for(const k of cand){const cp=pts.map(p=>p.slice());cp[k][4]=0;retime(cp);const v=maxSpeed(cp)[0];if(v<bv){bv=v;best=k}}
+  pts[best][4]=0;retime(pts);n++}
+ return n}
 function trackStats(pts,act){let d=0,mv=0;const th=ACT[act].move;
  for(let i=1;i<pts.length;i++){const s=hav(pts[i-1],pts[i]);d+=s;const dt=(pts[i][3]!=null&&pts[i-1][3]!=null)?pts[i][3]-pts[i-1][3]:0;
   if(dt>0&&s/dt>=th)mv+=dt}
@@ -323,7 +343,7 @@ function openEditor(fit){hide('start');show('editor');if(!map)initMap();map.inva
 function stats(){const s=trackStats(pts,S.act);$('km').textContent=fmtKm(s.d);
  if(s.T){$('info').textContent='Gesamt '+fmtT(s.T)+' · '+fmtRate(s.d,s.T,S.act);$('info2').textContent=s.mv?'In Bewegung '+fmtT(s.mv)+' · '+fmtRate(s.d,s.mv,S.act):''}
  else{$('info').textContent=pts.length+' Punkte · ohne Zeitstempel';$('info2').textContent=''}}
-function redraw(){retime(pts);line.setLatLngs(pts.map(p=>[p[0],p[1]]));stats();drawMarkers();save()}
+function redraw(){const fx=fixSpeeds(pts,ACT[S.act].vmax);if(fx)toast(fx===1?'1 Zeitstempel war unplausibel und wurde neu verteilt':fx+' Zeitstempel waren unplausibel und wurden neu verteilt');line.setLatLngs(pts.map(p=>[p[0],p[1]]));stats();drawMarkers();save()}
 function push(){undo.push(JSON.stringify(pts));if(undo.length>80)undo.shift();$('bUndo').disabled=false}
 const icon=c=>L.divIcon({className:'',html:'<div class="pt '+c+'"><i></i></div>',iconSize:[30,30],iconAnchor:[15,15]});
 function drawMarkers(){if(!map||!map._loaded)return;mk.clearLayers();if(mode==='add')return;
@@ -332,7 +352,7 @@ function drawMarkers(){if(!map||!map._loaded)return;mk.clearLayers();if(mode==='
  $('hint').textContent=cutA!==null?'Jetzt den zweiten Punkt antippen.':HINTS[mode];
  vis.forEach(i=>{const p=pts[i];
   const m=L.marker([p[0],p[1]],{icon:icon(i===cutA?'sel':(mode==='del'||mode==='cut')?'del':(p[4]?'':'ins')),draggable:mode==='move',keyboard:false,autoPan:true});
-  if(mode==='move'){m.on('dragstart',push);m.on('drag',e=>{const l=e.target.getLatLng();pts[i][0]=+l.lat.toFixed(6);pts[i][1]=+l.lng.toFixed(6);line.setLatLngs(pts.map(p=>[p[0],p[1]]))});m.on('dragend',()=>{retime(pts);stats();save()})}
+  if(mode==='move'){let from=null;m.on('dragstart',()=>{push();from=[pts[i][0],pts[i][1]]});m.on('drag',e=>{const l=e.target.getLatLng();pts[i][0]=+l.lat.toFixed(6);pts[i][1]=+l.lng.toFixed(6);line.setLatLngs(pts.map(p=>[p[0],p[1]]))});m.on('dragend',()=>{if(from&&hav(from,pts[i])>20)pts[i][4]=0;redraw()})}
   else m.on('click',()=>tapPoint(i));m.addTo(mk)})}
 function tapPoint(i){
  if(mode==='del'){if(pts.length<3)return toast('Ein Track braucht mindestens zwei Punkte');
@@ -367,7 +387,7 @@ const esc=s=>String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;',
 $('bExp').onclick=()=>{let last=-Infinity;const hasT=pts.every(p=>p[3]!=null);
  const rows=pts.map(p=>{let s='   <trkpt lat="'+p[0].toFixed(7)+'" lon="'+p[1].toFixed(7)+'">';if(p[2]!=null)s+='<ele>'+(+p[2]).toFixed(1)+'</ele>';
   if(hasT){const t=Math.max(p[3],last+1);last=t;s+='<time>'+new Date(t*1000).toISOString().replace('.000','')+'</time>'}return s+'</trkpt>'});
- const gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx creator="GPX Flickzeug 1.0.2" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">\n'+
+ const gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx creator="GPX Flickzeug 1.1" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">\n'+
   (hasT?' <metadata><time>'+new Date(pts[0][3]*1000).toISOString().replace('.000','')+'</time></metadata>\n':'')+
   ' <trk>\n  <name>'+esc(S.name||S.file)+'</name>\n'+(S.type?'  <type>'+esc(S.type)+'</type>\n':'')+'  <trkseg>\n'+rows.join('\n')+'\n  </trkseg>\n </trk>\n</gpx>\n';
  const name=(S.file||'track')+'_korrigiert.gpx',blob=new Blob([gpx],{type:'application/gpx+xml'});
