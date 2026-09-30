@@ -61,6 +61,14 @@ button:disabled{opacity:.4;cursor:default}
 .pt.ins i{border-color:var(--sel)}
 .pt.del i{border-color:var(--danger)}
 .pt.sel i{border-color:var(--sel);background:var(--sel);width:16px;height:16px}
+.leaflet-ends-pane{pointer-events:none}
+.end{position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.end i{width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);display:block}
+.end.start i{background:#16a34a}
+.end.finish i{background:repeating-conic-gradient(#111 0 25%,#fff 0 50%) 50%/8px 8px;border-color:#111}
+.end span{position:absolute;bottom:27px;left:50%;transform:translateX(-50%);color:#fff;font-size:12px;font-weight:700;padding:2px 7px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.end.start span{background:#16a34a}.end.finish span{background:#111}
+.end.near.start span{transform:translateX(-100%)}.end.near.finish span{bottom:auto;top:27px;transform:none}
 
 /* Sheets */
 .scrim{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
@@ -100,7 +108,7 @@ button:disabled{opacity:.4;cursor:default}
   <label class="btn big">GPX-Datei öffnen<input type="file" id="fIn" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden></label>
   <div id="drop">oder Datei hier hineinziehen</div>
   <button id="resume" hidden>Letzte Bearbeitung fortsetzen</button>
-  <div id="ver">Version 1.1 · Karte © OpenStreetMap-Mitwirkende · Luftbild © Esri</div>
+  <div id="ver">Version 1.2 · Karte © OpenStreetMap-Mitwirkende · Luftbild © Esri</div>
  </div>
 </section>
 
@@ -162,6 +170,7 @@ button:disabled{opacity:.4;cursor:default}
   <dt>Einfügen</dt><dd>Tipp auf die Karte, wo du wirklich langgekommen bist. Der Punkt wird in den nächstgelegenen Abschnitt gesetzt – bei Funklöchern einfach der Reihe nach den echten Weg entlangtippen.</dd>
   <dt>Löschen</dt><dd>Einen Punkt antippen, weg ist er.</dd>
   <dt>Abschnitt weg</dt><dd>Zwei Punkte antippen, alles dazwischen verschwindet. Danach mit „Einfügen“ neu setzen.</dd>
+  <dt>Abschnitte erkennen</dt><dd>Maus über eine Linie bewegen oder am Handy auf die Linie tippen: Der Abschnitt und seine beiden Punkte leuchten blau, unten stehen Länge, Zeit und Tempo. Start (grün) und Ziel (Zielflagge) sind immer markiert.</dd>
   <dt>Zeiten</dt><dd>Neue Punkte (blau) bekommen automatisch Zeiten mit gleichmäßigem Tempo zwischen den echten Punkten davor und danach. Start, Ziel und Gesamtzeit bleiben echt. Verschiebst du einen echten Punkt um mehr als 20 m, passt sein alter Zeitstempel nicht mehr – er wird dann ebenfalls blau und neu verteilt. Zusätzlich prüft die App nach jeder Änderung, ob irgendwo ein unmögliches Tempo entsteht, und korrigiert die betroffenen Zeitstempel.</dd>
   <dt>Speichern</dt><dd>„GPX speichern“ teilt oder lädt die korrigierte Datei herunter – die kannst du z. B. bei Strava hochladen. Deine Bearbeitung wird außerdem im Browser zwischengespeichert.</dd>
  </dl>
@@ -268,7 +277,7 @@ function trackStats(pts,act){let d=0,mv=0;const th=ACT[act].move;
 
 const KEY='gpx-flickzeug-v1';
 const $=id=>document.getElementById(id);
-let S=null,pts=[],undo=[],mode='move',cutA=null,map,line,rawLine,mk,osm,sat,pending=null;
+let S=null,pts=[],undo=[],mode='move',cutA=null,map,line,rawLine,mk,se,hl,osm,sat,pending=null,proj=null,hlIdx=-1,dragging=false;
 
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>e.classList.remove('on'),2200)}
 function fmtT(s){s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0')}
@@ -334,7 +343,11 @@ function initMap(){map=L.map('map',{zoomControl:false});
  rawLine=L.polyline([],{color:'#6b6f7a',weight:2,opacity:.6,dashArray:'4 5',interactive:false}).addTo(map);
  line=L.polyline([],{color:'#e6007e',weight:4,opacity:.9,interactive:false}).addTo(map);
  mk=L.layerGroup().addTo(map);
- map.on('moveend zoomend',drawMarkers);map.on('click',onMapClick)}
+ map.createPane('ends').style.zIndex=650;se=L.layerGroup().addTo(map);hl=L.layerGroup().addTo(map);
+ map.on('moveend zoomend',drawMarkers);map.on('zoomend viewreset',()=>{proj=null});map.on('click',onMapClick);
+ let raf=0;map.on('mousemove',e=>{if(dragging||matchMedia('(pointer:coarse)').matches)return;cancelAnimationFrame(raf);
+  raf=requestAnimationFrame(()=>{const[i,d]=nearestSeg(map.latLngToLayerPoint(e.latlng));if(i>=0&&(mode==='add'||d<14))showSeg(i);else clearSeg()})});
+ map.on('mouseout',()=>{if(!matchMedia('(pointer:coarse)').matches)clearSeg()})}
 function openEditor(fit){hide('start');show('editor');if(!map)initMap();map.invalidateSize();
  pts=S.pts;rawLine.setLatLngs(S.raw);$('bUndo').disabled=true;
  if(fit||!map._loaded)map.fitBounds(L.latLngBounds(pts.map(p=>[p[0],p[1]])),{padding:[30,30]});
@@ -343,16 +356,31 @@ function openEditor(fit){hide('start');show('editor');if(!map)initMap();map.inva
 function stats(){const s=trackStats(pts,S.act);$('km').textContent=fmtKm(s.d);
  if(s.T){$('info').textContent='Gesamt '+fmtT(s.T)+' · '+fmtRate(s.d,s.T,S.act);$('info2').textContent=s.mv?'In Bewegung '+fmtT(s.mv)+' · '+fmtRate(s.d,s.mv,S.act):''}
  else{$('info').textContent=pts.length+' Punkte · ohne Zeitstempel';$('info2').textContent=''}}
-function redraw(){const fx=fixSpeeds(pts,ACT[S.act].vmax);if(fx)toast(fx===1?'1 Zeitstempel war unplausibel und wurde neu verteilt':fx+' Zeitstempel waren unplausibel und wurden neu verteilt');line.setLatLngs(pts.map(p=>[p[0],p[1]]));stats();drawMarkers();save()}
+function redraw(){proj=null;if(hl){hlIdx=-1;hl.clearLayers()}const fx=fixSpeeds(pts,ACT[S.act].vmax);if(fx)toast(fx===1?'1 Zeitstempel war unplausibel und wurde neu verteilt':fx+' Zeitstempel waren unplausibel und wurden neu verteilt');line.setLatLngs(pts.map(p=>[p[0],p[1]]));stats();drawMarkers();save()}
 function push(){undo.push(JSON.stringify(pts));if(undo.length>80)undo.shift();$('bUndo').disabled=false}
 const icon=c=>L.divIcon({className:'',html:'<div class="pt '+c+'"><i></i></div>',iconSize:[30,30],iconAnchor:[15,15]});
-function drawMarkers(){if(!map||!map._loaded)return;mk.clearLayers();if(mode==='add')return;
+function nearestSeg(P){if(!proj||proj.length!==pts.length)proj=pts.map(p=>map.latLngToLayerPoint([p[0],p[1]]));
+ let best=Infinity,bi=-1,bt=0;for(let i=0;i<proj.length-1;i++){const A=proj[i],B=proj[i+1],dx=B.x-A.x,dy=B.y-A.y,L2=dx*dx+dy*dy;
+  let t=L2?((P.x-A.x)*dx+(P.y-A.y)*dy)/L2:0;t=Math.max(0,Math.min(1,t));const d=(A.x+t*dx-P.x)**2+(A.y+t*dy-P.y)**2;if(d<best){best=d;bi=i;bt=t}}
+ return[bi,Math.sqrt(best),bt]}
+function showSeg(i){if(i===hlIdx)return;hlIdx=i;hl.clearLayers();const a=pts[i],b=pts[i+1];
+ L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:'#0a6cff',weight:9,opacity:.8,interactive:false}).addTo(hl);
+ [a,b].forEach(p=>L.circleMarker([p[0],p[1]],{radius:9,color:'#0a6cff',weight:4,fillColor:'#fff',fillOpacity:1,interactive:false}).addTo(hl));
+ const m=hav(a,b),dt=(a[3]!=null&&b[3]!=null)?b[3]-a[3]:null;
+ $('hint').textContent='Abschnitt '+(i+1)+' → '+(i+2)+': '+Math.round(m)+' m'+(dt!=null?' · '+dt+' s · '+(m/Math.max(dt,1)*3.6).toFixed(1).replace('.',',')+' km/h':'')}
+function clearSeg(){if(hlIdx<0)return;hlIdx=-1;hl.clearLayers();$('hint').textContent=cutA!==null?'Jetzt den zweiten Punkt antippen.':HINTS[mode]}
+const endIcon=(k,near)=>L.divIcon({className:'',html:'<div class="end '+k+(near?' near':'')+'"><i></i><span>'+(k==='start'?'Start':'Ziel')+'</span></div>',iconSize:[30,30],iconAnchor:[15,15]});
+function drawEnds(){if(!se)return;se.clearLayers();const a=pts[0],b=pts[pts.length-1];
+ const near=map.latLngToLayerPoint([a[0],a[1]]).distanceTo(map.latLngToLayerPoint([b[0],b[1]]))<70;
+ se.addLayer(L.marker([a[0],a[1]],{icon:endIcon('start',near),interactive:false,keyboard:false,pane:'ends'}));
+ se.addLayer(L.marker([b[0],b[1]],{icon:endIcon('finish',near),interactive:false,keyboard:false,pane:'ends'}))}
+function drawMarkers(){if(!map||!map._loaded)return;mk.clearLayers();drawEnds();if(mode==='add')return;
  const b=map.getBounds().pad(.1),vis=[];pts.forEach((p,i)=>{if(b.contains([p[0],p[1]]))vis.push(i)});
  if(vis.length>350){if(mode!=='move'||map.getZoom()>=14)$('hint').textContent='Zu viele Punkte im Bild – weiter reinzoomen, dann erscheinen sie.';return}
  $('hint').textContent=cutA!==null?'Jetzt den zweiten Punkt antippen.':HINTS[mode];
  vis.forEach(i=>{const p=pts[i];
   const m=L.marker([p[0],p[1]],{icon:icon(i===cutA?'sel':(mode==='del'||mode==='cut')?'del':(p[4]?'':'ins')),draggable:mode==='move',keyboard:false,autoPan:true});
-  if(mode==='move'){let from=null;m.on('dragstart',()=>{push();from=[pts[i][0],pts[i][1]]});m.on('drag',e=>{const l=e.target.getLatLng();pts[i][0]=+l.lat.toFixed(6);pts[i][1]=+l.lng.toFixed(6);line.setLatLngs(pts.map(p=>[p[0],p[1]]))});m.on('dragend',()=>{if(from&&hav(from,pts[i])>20)pts[i][4]=0;redraw()})}
+  if(mode==='move'){let from=null;m.on('dragstart',()=>{push();dragging=true;clearSeg();from=[pts[i][0],pts[i][1]]});m.on('drag',e=>{const l=e.target.getLatLng();pts[i][0]=+l.lat.toFixed(6);pts[i][1]=+l.lng.toFixed(6);line.setLatLngs(pts.map(p=>[p[0],p[1]]));if(i===0||i===pts.length-1)drawEnds()});m.on('dragend',()=>{dragging=false;if(from&&hav(from,pts[i])>20)pts[i][4]=0;redraw()})}
   else m.on('click',()=>tapPoint(i));m.addTo(mk)})}
 function tapPoint(i){
  if(mode==='del'){if(pts.length<3)return toast('Ein Track braucht mindestens zwei Punkte');
@@ -361,10 +389,9 @@ function tapPoint(i){
   const a=Math.min(cutA,i),b=Math.max(cutA,i);cutA=null;
   if(b-a<2){drawMarkers();return toast('Dazwischen liegt kein Punkt')}
   push();pts.splice(a+1,b-a-1);redraw();toast((b-a-1)+' Punkte entfernt')}}
-function onMapClick(e){if(mode!=='add')return;const P=map.latLngToLayerPoint(e.latlng);let best=Infinity,bi=0,bt=0;
- for(let i=0;i<pts.length-1;i++){const A=map.latLngToLayerPoint([pts[i][0],pts[i][1]]),B=map.latLngToLayerPoint([pts[i+1][0],pts[i+1][1]]);
-  const dx=B.x-A.x,dy=B.y-A.y,L2=dx*dx+dy*dy;let t=L2?((P.x-A.x)*dx+(P.y-A.y)*dy)/L2:0;t=Math.max(0,Math.min(1,t));
-  const d=(A.x+t*dx-P.x)**2+(A.y+t*dy-P.y)**2;if(d<best){best=d;bi=i;bt=t}}
+function onMapClick(e){const[bi,dist,bt]=nearestSeg(map.latLngToLayerPoint(e.latlng));
+ if(mode!=='add'){if(bi>=0&&dist<24){if(bi===hlIdx)clearSeg();else showSeg(bi)}else clearSeg();return}
+ if(bi<0)return;
  const a=pts[bi],b=pts[bi+1];push();
  const ele=(a[2]!=null&&b[2]!=null)?+(a[2]+(b[2]-a[2])*bt).toFixed(1):(a[2]??b[2]);
  const t=(a[3]!=null&&b[3]!=null)?Math.round(a[3]+(b[3]-a[3])*bt):null;
@@ -387,7 +414,7 @@ const esc=s=>String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;',
 $('bExp').onclick=()=>{let last=-Infinity;const hasT=pts.every(p=>p[3]!=null);
  const rows=pts.map(p=>{let s='   <trkpt lat="'+p[0].toFixed(7)+'" lon="'+p[1].toFixed(7)+'">';if(p[2]!=null)s+='<ele>'+(+p[2]).toFixed(1)+'</ele>';
   if(hasT){const t=Math.max(p[3],last+1);last=t;s+='<time>'+new Date(t*1000).toISOString().replace('.000','')+'</time>'}return s+'</trkpt>'});
- const gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx creator="GPX Flickzeug 1.1" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">\n'+
+ const gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx creator="GPX Flickzeug 1.2" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">\n'+
   (hasT?' <metadata><time>'+new Date(pts[0][3]*1000).toISOString().replace('.000','')+'</time></metadata>\n':'')+
   ' <trk>\n  <name>'+esc(S.name||S.file)+'</name>\n'+(S.type?'  <type>'+esc(S.type)+'</type>\n':'')+'  <trkseg>\n'+rows.join('\n')+'\n  </trkseg>\n </trk>\n</gpx>\n';
  const name=(S.file||'track')+'_korrigiert.gpx',blob=new Blob([gpx],{type:'application/gpx+xml'});
